@@ -87,6 +87,10 @@ _PROBE_CMD = (
     "echo \"FACT_SS=$(command -v ss || echo none) FACT_WG=$(command -v wg || echo none) "
     "UNIT=$(systemctl list-unit-files 2>/dev/null | grep -c sing-box) "
     "WGSCRIPT=$(test -f /data/home/wireguard/start-wg.sh && echo yes || echo no)\"; "
+    "echo \"PORTS=$(ss -tln 2>/dev/null | awk 'NR>1{print $4}' | tr '\\n' ',') "
+    "SVCS=$(systemctl list-units --type=service --state=running --no-legend --plain 2>/dev/null "
+    "| awk '{print $1}' | head -15 | tr '\\n' ',') "
+    "DOCKER=$(command -v docker >/dev/null && docker ps --format '{{.Names}}:{{.Ports}}' 2>/dev/null | tr '\\n' ',' || echo none)\"; "
     "echo PROBE_DONE"
 )
 
