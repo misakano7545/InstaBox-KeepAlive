@@ -11,11 +11,18 @@ from urllib.parse import urlparse
 
 import instabox_keepalive as k
 
+# 端点挂在公网上，不设口令等于谁都能替你消耗 API 配额；留空则不校验（仅本地用）
+TOKEN = os.environ.get("KEEPALIVE_TOKEN", "").strip()
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if urlparse(self.path).path != "/keepalive":
             self.send_response(404)
+            self.end_headers()
+            return
+        if TOKEN and self.headers.get("X-Keepalive-Token") != TOKEN:
+            self.send_response(403)
             self.end_headers()
             return
         code = k.main()

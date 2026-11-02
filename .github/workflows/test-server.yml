@@ -11,6 +11,7 @@ jobs:
       - name: run /keepalive through the HTTP wrapper
         env:
           PORT: "8080"
+          KEEPALIVE_TOKEN: ${{ secrets.KEEPALIVE_TOKEN }}
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
           INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
           INSTABOX_PUBLIC_URL: ${{ secrets.INSTABOX_PUBLIC_URL }}
@@ -18,7 +19,10 @@ jobs:
         run: |
           python3 server.py > /tmp/srv.log 2>&1 &
           for i in $(seq 1 20); do curl -s -o /dev/null --max-time 1 http://127.0.0.1:8080/nope && break; sleep 1; done
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 300 http://127.0.0.1:8080/keepalive)
-          echo "keepalive -> HTTP $code"
+          anon=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 http://127.0.0.1:8080/keepalive)
+          echo "no token -> HTTP $anon (expect 403 when KEEPALIVE_TOKEN is set)"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 300 -H "X-Keepalive-Token: $KEEPALIVE_TOKEN" http://127.0.0.1:8080/keepalive)
+          echo "with token -> HTTP $code"
           cat /tmp/srv.log
           test "$code" = "200"
+          test "$anon" = "403" -o -z "$KEEPALIVE_TOKEN"
