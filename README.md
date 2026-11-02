@@ -1,7 +1,7 @@
 # InstaBox-KeepAlive
 
-用 GitHub Actions 定时给 InstaBox 免费实例续租，实例掉了就唤醒/启动，并检查机器内
-`sing-box`、`wg0`、`2080` 端口，挂了自动重启。
+用 GitHub Actions 定时给 InstaBox 免费实例续租，实例掉了就唤醒/启动，再访问一次
+Public URL 确认服务活着，挂了执行一条你指定的重启命令。
 
 ```
 instabox_keepalive.py            保活主脚本（纯标准库，无依赖）
