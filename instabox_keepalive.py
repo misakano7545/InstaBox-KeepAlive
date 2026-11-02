@@ -25,6 +25,8 @@ except ValueError:
     LEASE_TTL = 900
 
 API_KEY = os.environ.get("INSTABOX_API_KEY", "").strip()
+# 机器内重启服务的命令，例如 "docker compose -f /root/app/docker-compose.yml up -d"
+RESTART_CMD = os.environ.get("INSTABOX_RESTART_CMD", "").strip()
 
 
 def log(msg):
@@ -79,66 +81,38 @@ def renew_lease():
                {"ttlSeconds": LEASE_TTL}, timeout=30)
 
 
-# 注意：wg show interfaces 只能全局列出接口，绝不能写 wg show wg0 interfaces。
-_PROBE_CMD = (
-    "if sudo systemctl is-active -q sing-box; then echo SINGBOX_OK; else echo SINGBOX_DOWN; fi; "
-    "if sudo wg show interfaces 2>/dev/null | grep -q '^wg0$'; then echo WG_OK; else echo WG_DOWN; fi; "
-    "if ss -tln 2>/dev/null | grep -q ':2080 '; then echo PORT_OK; else echo PORT_DOWN; fi; "
-    "echo \"FACT_SS=$(command -v ss || echo none) FACT_WG=$(command -v wg || echo none) "
-    "UNIT=$(systemctl list-unit-files 2>/dev/null | grep -c sing-box) "
-    "WGSCRIPT=$(test -f /data/home/wireguard/start-wg.sh && echo yes || echo no)\"; "
-    "echo \"PORTS=$(ss -tln 2>/dev/null | awk 'NR>1{print $4}' | tr '\\n' ',') "
-    "SVCS=$(systemctl list-units --type=service --state=running --no-legend --plain 2>/dev/null "
-    "| awk '{print $1}' | head -15 | tr '\\n' ',') "
-    "DOCKER=$(command -v docker >/dev/null && docker ps --format '{{.Names}}:{{.Ports}}' 2>/dev/null | tr '\\n' ',' || echo none)\"; "
-    "echo PROBE_DONE"
-)
-
-
-def probe_services():
-    status, info = api("POST", f"/v1/machines/{MACHINE_ID}/exec",
-                       {"cmd": _PROBE_CMD, "timeoutSeconds": 30}, timeout=45)
-    out = info.get("stdout", "") if isinstance(info, dict) else ""
-    result = {"singbox": "SINGBOX_OK" in out, "wg": "WG_OK" in out,
-              "port": "PORT_OK" in out, "ran": "PROBE_DONE" in out,
-              "raw": out.strip().replace("\n", " | ")[:300]}
-    if status != 200 or not result["ran"]:
-        result["error"] = f"exec HTTP {status}, exit={info.get('exitCode')}"
-    return result
-
-
-def recover_services(probe):
-    parts = []
-    if not probe["wg"]:
-        parts.append("bash /data/home/wireguard/start-wg.sh")
-    if not (probe["singbox"] and probe["port"]):
-        parts.append("sudo systemctl restart sing-box")
-    if not parts:
-        return probe
-    parts.append("sleep 3")
-    cmd = "; ".join(parts)
-    status, info = api("POST", f"/v1/machines/{MACHINE_ID}/exec",
-                       {"cmd": cmd, "timeoutSeconds": 60}, timeout=75)
-    log(f"recover exec -> HTTP {status}, exit={info.get('exitCode') if isinstance(info, dict) else '?'}")
-    if isinstance(info, dict):
-        log(f"recover out: {str(info.get('stdout') or '')[:200]} ")
-        log(f"recover err: {str(info.get('stderr') or '')[:300]}")
-    return probe_services()
-
-
-def heartbeat_public_url():
+def public_url_status():
+    """公网 URL 的真实响应码：2xx/3xx 才算服务活着。"""
     if not PUBLIC_URL:
         return None
     try:
         req = urllib.request.Request(PUBLIC_URL + "/", method="GET")
         req.add_header("User-Agent", "instabox-keepalive-actions/1.0")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            resp.read(1)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read(64)
             return resp.status
     except urllib.error.HTTPError as e:
         return e.code
     except Exception as e:
         return f"ERR:{str(e)[:80]}"
+
+
+def alive(st):
+    return isinstance(st, int) and st < 400
+
+
+def restart_service():
+    status, info = api("POST", f"/v1/machines/{MACHINE_ID}/exec",
+                       {"cmd": RESTART_CMD, "timeoutSeconds": 120}, timeout=135)
+    log(f"restart -> HTTP {status}, exit={info.get('exitCode') if isinstance(info, dict) else '?'}")
+    if isinstance(info, dict):
+        out = str(info.get("stdout") or "").strip()
+        err = str(info.get("stderr") or "").strip()
+        if out:
+            log(f"restart out: {out[:200]}")
+        if err:
+            log(f"restart err: {err[:300]}")
+    time.sleep(5)
 
 
 def main():
@@ -190,31 +164,23 @@ def main():
         return 2
     log(f"OK: lease active, expiresAt={info.get('expiresAt')}")
 
-    probe = probe_services()
-    if probe.get("error"):
-        log(f"WARN: service probe failed ({probe['error']}); skipping recovery this round.")
-    else:
-        log(f"probe: singbox={'OK' if probe['singbox'] else 'DOWN'} "
-            f"wg={'OK' if probe['wg'] else 'DOWN'} port2080={'OK' if probe['port'] else 'DOWN'}")
-        if not (probe["singbox"] and probe["wg"] and probe["port"]):
-            log(f"raw probe: {probe.get('raw', '')}")
-            log("recovering down services...")
-            probe = recover_services(probe)
-            if probe.get("error"):
-                log(f"ERROR: recovery probe failed ({probe['error']}).")
-            else:
-                log(f"after recovery: singbox={'OK' if probe['singbox'] else 'DOWN'} "
-                    f"wg={'OK' if probe['wg'] else 'DOWN'} port2080={'OK' if probe['port'] else 'DOWN'}")
-                if not (probe["singbox"] and probe["wg"] and probe["port"]):
-                    log("ERROR: some services still down after recovery; will retry next round.")
-
-    hb = heartbeat_public_url()
-    if hb is None:
-        log("public heartbeat skipped (no URL configured).")
-    elif isinstance(hb, int):
-        log(f"public heartbeat: HTTP {hb} (any response means the gateway path is alive).")
-    else:
-        log(f"WARN: public heartbeat failed ({hb}).")
+    probe = public_url_status()
+    if probe is None:
+        log("public URL 未配置，跳过存活检查。")
+        return 0
+    log(f"public URL -> {probe}")
+    if not alive(probe):
+        if not RESTART_CMD:
+            log("ERROR: 服务不可达，且未配置 INSTABOX_RESTART_CMD，无法自动恢复。")
+            return 1
+        log("服务不可达，执行重启命令...")
+        restart_service()
+        probe = public_url_status()
+        log(f"after restart -> {probe}")
+        if not alive(probe):
+            log("ERROR: 重启后仍不可达，等下一轮重试。")
+            return 1
+    log("OK: 服务可用。")
     return 0
 
 

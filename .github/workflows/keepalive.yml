@@ -24,6 +24,7 @@ jobs:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
           INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
           INSTABOX_PUBLIC_URL: ${{ secrets.INSTABOX_PUBLIC_URL }}
+          INSTABOX_RESTART_CMD: ${{ secrets.INSTABOX_RESTART_CMD }}
           # 定时任务可能延迟，TTL 取满 1 小时，避免两次运行之间 lease 先过期
           INSTABOX_LEASE_TTL: "3600"
         run: python3 instabox_keepalive.py
