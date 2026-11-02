@@ -16,7 +16,7 @@ instabox_keepalive.py            保活主脚本（纯标准库，无依赖）
 | --- | --- |
 | `INSTABOX_API_KEY` | 仪表板建的 API key，权限需含 `machines:read` + `machines:write` |
 | `INSTABOX_MACHINE_ID` | 机器 ID，形如 `m_xxxxxxxx` |
-| `INSTABOX_PUBLIC_URL` | 对外访问地址，如 `https://2080-xxxx.instabox.tech`（可留空，跳过心跳） |
+| `INSTABOX_PUBLIC_URL` | 对外访问地址，从 `GET /v1/machines/{id}/ports` 的 `ports[].url` 取（可留空，跳过存活检查） |
 | `INSTABOX_RESTART_CMD` | 可选。URL 挂了时在机器内执行的重启命令，如 `docker compose -f /root/app/docker-compose.yml up -d` |
 
 仓库是公开的，所以机器 ID 和地址也走 secret，不写进代码。
@@ -39,8 +39,15 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 **API Key**：`https://dashboard.instabox.sh/dashboard/api-keys` 新建，范围勾
 `machines:read` + `machines:write`。只勾 read 会在续租时拿到 403。
 
-**Public URL**：就是平时访问 2080 的那个域名，`https://2080-<id>.instabox.tech`。留空则跳过心跳，
-其余功能不受影响。
+**Public URL**：不要自己拼，直接问 API 要（端口发布后平台才是权威来源）：
+
+```bash
+curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
+  https://api.instabox.sh/v1/machines/$INSTABOX_MACHINE_ID/ports
+```
+
+返回里 `ports[].url` 就是可用地址，形如 `https://<port>-<machine-id>.instabox.tech`。
+注意端口号是你发布时选的，不一定是 2080。留空则跳过存活检查。
 
 配好后在 Actions → keepalive → Run workflow 手动跑一次，看日志确认：
 `OK: lease active` + `public URL -> 200` + `OK: 服务可用。`
