@@ -93,7 +93,8 @@ def probe_services():
                        {"cmd": _PROBE_CMD, "timeoutSeconds": 30}, timeout=45)
     out = info.get("stdout", "") if isinstance(info, dict) else ""
     result = {"singbox": "SINGBOX_OK" in out, "wg": "WG_OK" in out,
-              "port": "PORT_OK" in out, "ran": "PROBE_DONE" in out}
+              "port": "PORT_OK" in out, "ran": "PROBE_DONE" in out,
+              "raw": out.strip().replace("\n", " | ")[:300]}
     if status != 200 or not result["ran"]:
         result["error"] = f"exec HTTP {status}, exit={info.get('exitCode')}"
     return result
@@ -186,6 +187,7 @@ def main():
         log(f"probe: singbox={'OK' if probe['singbox'] else 'DOWN'} "
             f"wg={'OK' if probe['wg'] else 'DOWN'} port2080={'OK' if probe['port'] else 'DOWN'}")
         if not (probe["singbox"] and probe["wg"] and probe["port"]):
+            log(f"raw probe: {probe.get('raw', '')}")
             log("recovering down services...")
             probe = recover_services(probe)
             if probe.get("error"):
