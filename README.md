@@ -20,6 +20,27 @@ instabox_keepalive.py            保活主脚本（纯标准库，无依赖）
 
 仓库是公开的，所以机器 ID 和地址也走 secret，不写进代码。
 
+### 这几个值怎么拿
+
+**Machine ID** 三个途径，按省事程度排：
+
+1. 从访问地址反推：地址形如 `https://2080-<machine-id>.instabox.tech`，
+   把 `2080-` 后面的那段取出、加上 `m_` 前缀，就是 Machine ID
+   （例：`2080-abc123xyz.instabox.tech` → `m_abc123xyz`）。
+2. Dashboard `https://dashboard.instabox.sh/` 点进机器，详情页 URL 里带 `m_xxx`。
+3. 有 key 之后一次列全（多台机器时用）：
+
+```bash
+curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
+  https://api.instabox.sh/v1/machines | python3 -m json.tool
+```
+
+**API Key**：`https://dashboard.instabox.sh/dashboard/api-keys` 新建，范围勾
+`machines:read` + `machines:write`。只勾 read 会在续租时拿到 403。
+
+**Public URL**：就是平时访问 2080 的那个域名，`https://2080-<id>.instabox.tech`。留空则跳过心跳，
+其余功能不受影响。
+
 配好后在 Actions → keepalive → Run workflow 手动跑一次，看日志确认：
 `OK: lease active` + 三项 probe 都是 `OK`。
 
