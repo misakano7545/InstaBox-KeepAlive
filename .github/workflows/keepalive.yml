@@ -1,0 +1,29 @@
+name: keepalive
+
+on:
+  schedule:
+    # GitHub 最小间隔就是 5 分钟，实际触发可能延迟数分钟到十几分钟
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: renew lease / probe / recover
+        env:
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+          INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+          INSTABOX_PUBLIC_URL: ${{ secrets.INSTABOX_PUBLIC_URL }}
+          # 定时任务可能延迟，TTL 取满 1 小时，避免两次运行之间 lease 先过期
+          INSTABOX_LEASE_TTL: "3600"
+        run: python3 instabox_keepalive.py
