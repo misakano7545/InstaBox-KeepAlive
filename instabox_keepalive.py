@@ -84,6 +84,9 @@ _PROBE_CMD = (
     "if sudo systemctl is-active -q sing-box; then echo SINGBOX_OK; else echo SINGBOX_DOWN; fi; "
     "if sudo wg show interfaces 2>/dev/null | grep -q '^wg0$'; then echo WG_OK; else echo WG_DOWN; fi; "
     "if ss -tln 2>/dev/null | grep -q ':2080 '; then echo PORT_OK; else echo PORT_DOWN; fi; "
+    "echo \"FACT_SS=$(command -v ss || echo none) FACT_WG=$(command -v wg || echo none) "
+    "UNIT=$(systemctl list-unit-files 2>/dev/null | grep -c sing-box) "
+    "WGSCRIPT=$(test -f /data/home/wireguard/start-wg.sh && echo yes || echo no)\"; "
     "echo PROBE_DONE"
 )
 
@@ -113,6 +116,9 @@ def recover_services(probe):
     status, info = api("POST", f"/v1/machines/{MACHINE_ID}/exec",
                        {"cmd": cmd, "timeoutSeconds": 60}, timeout=75)
     log(f"recover exec -> HTTP {status}, exit={info.get('exitCode') if isinstance(info, dict) else '?'}")
+    if isinstance(info, dict):
+        log(f"recover out: {str(info.get('stdout') or '')[:200]} ")
+        log(f"recover err: {str(info.get('stderr') or '')[:300]}")
     return probe_services()
 
 
