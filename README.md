@@ -5,7 +5,9 @@ Public URL 确认服务活着，挂了执行一条你指定的重启命令。
 
 ```
 instabox_keepalive.py            保活主脚本（纯标准库，无依赖）
-.github/workflows/keepalive.yml  每 5 分钟跑一次 + 手动触发
+server.py                        PaaS 用的 HTTP 外壳（GET /keepalive）
+Dockerfile                       PaaS 容器镜像
+.github/workflows/keepalive.yml  手动触发（GitHub 的 cron 定时已关掉）
 ```
 
 ## 配置（一次性）
@@ -63,6 +65,32 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 
 返回码：`0` 正常，`1` 服务不可达（重启后仍不可达，或没配重启命令），`2` 鉴权或 lease 失败。
 `1` / `2` 都会让运行变红，GitHub 会发失败邮件。
+
+## 部署到 PaaS（Pxxl / Railway / Render 等）
+
+一次性脚本不能直接上：PaaS 的 Web Service 要求监听 `$PORT`、绑 `0.0.0.0`、能过健康检查，
+跑完就退出的进程会被判定部署失败。所以仓库里另有：
+
+```
+server.py    HTTP 外壳：GET /keepalive 跑一轮，成功 200、失败 500
+Dockerfile   python:3.12-slim + CMD python3 server.py
+```
+
+以 Pxxl 为例（它的 Cron Jobs 是"定时打你的 HTTP 端点"，不是跑命令）：
+
+1. Deploy → 源选 GitHub 选本仓库，或源选 Dockerfile；类型 **Web Service**
+2. 启动命令 `python3 server.py`（Dockerfile 源已经写在 CMD 里）
+3. Secrets（scope 选 Project）配 `INSTABOX_API_KEY`、`INSTABOX_MACHINE_ID`、
+   `INSTABOX_PUBLIC_URL`、`KEEPALIVE_TOKEN`
+4. Cron Jobs 新建：method `GET`，URL `https://<你的项目域名>/keepalive`，
+   header `X-Keepalive-Token: <KEEPALIVE_TOKEN 的值>`，cron `*/5 * * * *`
+5. 在 Cron 详情页看 next run，再手动 Trigger 一次，run history 里应出现 200
+
+注意：
+
+- `KEEPALIVE_TOKEN` 不配等于端点无鉴权，任何人在公网打它都会消耗你的 API 配额。
+- 单次最坏约 2~4 分钟（`wait_running` 90s + 重启 135s），cron 的 timeout 要大于它。
+- Pxxl 的 Cron Jobs 只在 Plus / Pro / Enterprise 档提供；免费档只能让容器自己循环。
 
 ## 已知限制
 
