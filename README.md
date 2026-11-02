@@ -46,7 +46,8 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 
 ## 行为
 
-每轮做四件事，任一步失败都会让本次运行变红（GitHub 会发失败邮件）：
+每轮做四件事。续租失败（鉴权/额度）会让本次运行变红；服务探测失败只打日志，
+不判定失败，等下一轮（5 分钟）重试：
 
 1. 查机器状态；
 2. 续 lease（TTL 3600s）；拿不到且报 `machine_not_running` 就先 `wake`，还不行就 `start`，然后重试续租；
