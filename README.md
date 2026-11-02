@@ -17,6 +17,7 @@ instabox_keepalive.py            保活主脚本（纯标准库，无依赖）
 | `INSTABOX_API_KEY` | 仪表板建的 API key，权限需含 `machines:read` + `machines:write` |
 | `INSTABOX_MACHINE_ID` | 机器 ID，形如 `m_xxxxxxxx` |
 | `INSTABOX_PUBLIC_URL` | 对外访问地址，如 `https://2080-xxxx.instabox.tech`（可留空，跳过心跳） |
+| `INSTABOX_RESTART_CMD` | 可选。URL 挂了时在机器内执行的重启命令，如 `docker compose -f /root/app/docker-compose.yml up -d` |
 
 仓库是公开的，所以机器 ID 和地址也走 secret，不写进代码。
 
@@ -42,19 +43,19 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 其余功能不受影响。
 
 配好后在 Actions → keepalive → Run workflow 手动跑一次，看日志确认：
-`OK: lease active` + 三项 probe 都是 `OK`。
+`OK: lease active` + `public URL -> 200` + `OK: 服务可用。`
 
 ## 行为
 
-每轮做四件事。续租失败（鉴权/额度）会让本次运行变红；服务探测失败只打日志，
-不判定失败，等下一轮（5 分钟）重试：
+每轮做三件事：
 
 1. 查机器状态；
 2. 续 lease（TTL 3600s）；拿不到且报 `machine_not_running` 就先 `wake`，还不行就 `start`，然后重试续租；
-3. 在机器内 `exec` 探测 `sing-box` / `wg0` / 2080 端口，缺哪个补哪个（`start-wg.sh` / `systemctl restart sing-box`），再探一次；
-4. 请求一次公网地址，确认网关链路通。
+3. 访问一次 `INSTABOX_PUBLIC_URL`，**2xx/3xx 才算服务可用**（404/502/超时都算挂了）。
+   挂了就 exec 一次 `INSTABOX_RESTART_CMD`，5 秒后再访问一次确认。
 
-返回码：`0` 正常，`1` 配置缺失，`2` 鉴权或 lease 失败。
+返回码：`0` 正常，`1` 服务不可达（重启后仍不可达，或没配重启命令），`2` 鉴权或 lease 失败。
+`1` / `2` 都会让运行变红，GitHub 会发失败邮件。
 
 ## 已知限制
 
@@ -64,5 +65,6 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
   想长期稳定，隔一两个月手动 Run 一次或提交一次。
 - 实例连续运行 8 小时后会被平台停掉，届时由上面第 2 步的 `start` 分支拉起来，
   单个 run 最长约 2 分钟（含 `wait_running` 轮询）。
-- 恢复命令里的 `start-wg.sh` 路径、`sing-box` 服务名、2080 端口是按当前机器写死的，
-  换机器要改脚本里的 `_PROBE_CMD` / `recover_services`。
+- 存活判断只看 URL 根路径，如果服务的根路径本身就返回 4xx（只是 API，没有首页），
+  这个检查会一直误报挂了——那就把 `public_url_status()` 里的 `PUBLIC_URL + "/"` 换成真实的健康检查路径。
+- 重启命令由 `INSTABOX_RESTART_CMD` 提供，脚本不假设任何服务名或端口；不配就只报警不恢复。
