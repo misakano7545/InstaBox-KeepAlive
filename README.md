@@ -92,6 +92,32 @@ Dockerfile   python:3.12-slim + CMD python3 server.py
 - 单次最坏约 2~4 分钟（`wait_running` 90s + 重启 135s），cron 的 timeout 要大于它。
 - Pxxl 的 Cron Jobs 只在 Plus / Pro / Enterprise 档提供；免费档只能让容器自己循环。
 
+## 免费的定时器：cron-job.org
+
+cron-job.org 完全免费、无限个任务、最小 1 分钟粒度、支持任意 method + 自定义 header + 请求体，
+可以直接替代付费的 Cron Jobs 档位。两种用法：
+
+**A. 敲 GitHub 的 dispatch 接口（推荐，不需要 Pxxl）**
+
+method `POST`，URL
+
+```
+https://api.github.com/repos/misakano7545/InstaBox-KeepAlive/actions/workflows/keepalive.yml/dispatches
+```
+
+header `Authorization: Bearer <PAT>`、`Accept: application/vnd.github+json`，
+body `{"ref":"main"}`，cron `*/5 * * * *`。
+
+PAT 用 fine-grained、只授权这一个仓库的 `Actions: write`。接口立刻返回 204
+（已实测），所以 cron-job.org 那 30 秒超时完全不影响它——真正跑在 Actions 里，
+公开仓库不计费。
+
+**B. 敲 Pxxl 的 `/keepalive`**
+
+method `GET`，URL `https://<你的项目域名>/keepalive`，header `X-Keepalive-Token: <值>`。
+但 cron-job.org 到 30 秒就断开连接：机器醒着时一轮 1~2 秒没事，机器睡了要走
+wake + 轮询，超过 30 秒会被记成失败，连续失败 25 次这个任务会被自动停用。
+
 ## 已知限制
 
 - **没有定时触发**：`schedule` 已注释掉。实测这个账号的 cron 会排队 5 小时以上才跑
