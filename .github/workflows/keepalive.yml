@@ -1,9 +1,9 @@
 name: keepalive
 
 on:
-  schedule:
-    # GitHub 最小间隔就是 5 分钟，实际触发可能延迟数分钟到十几分钟
-    - cron: "*/5 * * * *"
+  # schedule 由 GitHub 排队 5 小时以上才触发，在这个账号上不可用，先关掉
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:

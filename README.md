@@ -66,10 +66,10 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 
 ## 已知限制
 
-- **5 分钟是 GitHub 的下限**，高峰期 cron 可能延迟 10 分钟以上；因此 TTL 设为 1 小时，
-  单次延迟不会让实例睡过去。
-- **公开仓库连续 60 天没有任何提交，GitHub 会自动停掉 scheduled workflow**；
-  想长期稳定，隔一两个月手动 Run 一次或提交一次。
+- **没有定时触发**：`schedule` 已注释掉。实测这个账号的 cron 会排队 5 小时以上才跑
+  （同账号另两个仓库 10 天 35 次运行，全部迟到 4~7.5 小时），5 分钟粒度不可用。
+  现在只能手动 Actions → Run workflow，或由外部每分钟/5 分钟 `gh workflow run` 敲门。
+- `INSTABOX_LEASE_TTL` 仍是 3600，配合 5 分钟粒度的外部敲门留足余量。
 - 实例连续运行 8 小时后会被平台停掉，届时由上面第 2 步的 `start` 分支拉起来，
   单个 run 最长约 2 分钟（含 `wait_running` 轮询）。
 - 存活判断只看 URL 根路径，如果服务的根路径本身就返回 4xx（只是 API，没有首页），
