@@ -72,7 +72,7 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 跑完就退出的进程会被判定部署失败。所以仓库里另有：
 
 ```
-server.py    HTTP 外壳：GET /keepalive 跑一轮，成功 200、失败 500
+server.py    HTTP 外壳：GET /keepalive 投递一轮、立刻 202；成功失败看日志
 Dockerfile   python:3.12-slim + CMD python3 server.py
 ```
 
@@ -84,12 +84,13 @@ Dockerfile   python:3.12-slim + CMD python3 server.py
    `INSTABOX_PUBLIC_URL`、`KEEPALIVE_TOKEN`
 4. Cron Jobs 新建：method `GET`，URL `https://<你的项目域名>/keepalive`，
    header `X-Keepalive-Token: <KEEPALIVE_TOKEN 的值>`，cron `*/5 * * * *`
-5. 在 Cron 详情页看 next run，再手动 Trigger 一次，run history 里应出现 200
+5. 在 Cron 详情页看 next run，再手动 Trigger 一次，应返回 202、日志里出现 `OK: 服务可用。`
 
 注意：
 
 - `KEEPALIVE_TOKEN` 不配等于端点无鉴权，任何人在公网打它都会消耗你的 API 配额。
-- 单次最坏约 2~4 分钟（`wait_running` 90s + 重启 135s），cron 的 timeout 要大于它。
+- 单次最坏约 2~4 分钟（`wait_running` 90s + 重启 135s），所以 `/keepalive` 只投递、立刻
+  回 202，不在请求里等——调用方的超时设多短都不会把一次真实的保活判成失败。
 - Pxxl 的 Cron Jobs 只在 Plus / Pro / Enterprise 档提供；免费档只能让容器自己循环。
 
 ### 没有 cron 的平台（Cloady 这类纯容器 PaaS）
@@ -113,18 +114,36 @@ method `POST`，URL
 https://api.github.com/repos/misakano7545/InstaBox-KeepAlive/actions/workflows/keepalive.yml/dispatches
 ```
 
-header `Authorization: Bearer <PAT>`、`Accept: application/vnd.github+json`，
+header 两行：`Authorization: Bearer <你的PAT>` 和 `Accept: application/vnd.github+json`，
 body `{"ref":"main"}`，cron `*/5 * * * *`。
 
 PAT 用 fine-grained、只授权这一个仓库的 `Actions: write`。接口立刻返回 204
 （已实测），所以 cron-job.org 那 30 秒超时完全不影响它——真正跑在 Actions 里，
 公开仓库不计费。
 
-**B. 敲 Pxxl 的 `/keepalive`**
+**B. 敲 Pxxl 的 `/keepalive`（当前选定的方案）**
 
-method `GET`，URL `https://<你的项目域名>/keepalive`，header `X-Keepalive-Token: <值>`。
-但 cron-job.org 到 30 秒就断开连接：机器醒着时一轮 1~2 秒没事，机器睡了要走
-wake + 轮询，超过 30 秒会被记成失败，连续失败 25 次这个任务会被自动停用。
+`/keepalive` 是**投递式**的：收到请求就开一个后台线程跑那一轮，立刻返回 `202`，
+不等结果。所以 cron-job.org 那 30 秒硬超时不影响它——机器睡着时那一轮要 90 秒以上，
+照样不会被记成失败。
+
+cron-job.org 里这样填：
+
+| 字段 | 值 |
+|---|---|
+| URL | `https://<你的 Pxxl 项目域名>/keepalive` |
+| 请求方法 | `GET` |
+| Schedule | Every 5 minutes（或 Every 1 minute） |
+| Headers | `X-Keepalive-Token: <KEEPALIVE_TOKEN 的值>` |
+| Timeout | 默认 30 秒即可 |
+
+注意：
+
+- 同一时刻只跑一轮。上一轮没结束（机器在醒来的 90 秒里）时，新请求直接跳过并在日志里写
+  `上一轮还没结束，跳过本轮`，不会叠加。所以 1 分钟触发也是安全的。
+- 202 只代表"收到"，真正的成败在 Pxxl 的 Logs 里（`OK: 服务可用。` / `ERROR: ...`）。
+  cron-job.org 那边永远显示成功，别拿它当健康证据。
+- 想知道状态就翻日志，`/keepalive` 不提供 `/status`。
 
 ## 已知限制
 

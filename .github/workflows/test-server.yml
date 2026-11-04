@@ -1,0 +1,27 @@
+name: test-server
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - name: 202 arrives at once, the round still finishes in the background
+        env:
+          PORT: "8080"
+          KEEPALIVE_TOKEN: ${{ secrets.KEEPALIVE_TOKEN }}
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+          INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+          INSTABOX_PUBLIC_URL: ${{ secrets.INSTABOX_PUBLIC_URL }}
+          INSTABOX_LEASE_TTL: "3600"
+        run: |
+          python3 server.py > /tmp/srv.log 2>&1 &
+          for i in $(seq 1 20); do curl -s -o /dev/null --max-time 1 http://127.0.0.1:8080/nope && break; sleep 1; done
+          code=$(curl -s -o /dev/null -w '%{http_code} %{time_total}' -H "X-Keepalive-Token: $KEEPALIVE_TOKEN" http://127.0.0.1:8080/keepalive)
+          echo "dispatch -> $code"
+          sleep 20
+          cat /tmp/srv.log
+          grep -q 'OK: 服务可用。' /tmp/srv.log
+          case "$code" in 202*) ;; *) exit 1;; esac

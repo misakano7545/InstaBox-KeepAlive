@@ -18,6 +18,22 @@ TOKEN = os.environ.get("KEEPALIVE_TOKEN", "").strip()
 # >0 就自己按秒循环，用于没有 cron 的平台（Cloady 这类纯容器 PaaS）
 INTERVAL = int(os.environ.get("KEEPALIVE_INTERVAL", "0"))
 
+_running = threading.Lock()
+
+
+def run_once():
+    # cron-job.org 30 秒就断连，而机器睡着时一轮要 90 秒以上，所以请求只负责投递
+    # shortcut: 同一时刻只跑一轮（睡着的机器上每分钟触发会叠加），要并发就换队列
+    if not _running.acquire(blocking=False):
+        k.log("上一轮还没结束，跳过本轮")
+        return
+    try:
+        k.main()
+    except Exception as e:  # 线程里的异常不兜住就静默消失了
+        k.log(f"ERROR: 未捕获异常 {e!r}")
+    finally:
+        _running.release()
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -29,8 +45,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(403)
             self.end_headers()
             return
-        code = k.main()
-        self.send_response(200 if code == 0 else 500)
+        threading.Thread(target=run_once, daemon=True).start()
+        self.send_response(202)
         self.end_headers()
 
     def log_message(self, fmt, *args):
@@ -43,7 +59,7 @@ if __name__ == "__main__":
     if INTERVAL > 0:
         def loop():
             while True:
-                k.main()
+                run_once()
                 time.sleep(INTERVAL)
         threading.Thread(target=loop, daemon=True).start()
         k.log(f"自循环已开启，每 {INTERVAL}s 一轮")
