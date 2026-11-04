@@ -81,14 +81,14 @@ Dockerfile   python:3.12-slim + CMD python3 server.py
 1. Deploy → 源选 GitHub 选本仓库，或源选 Dockerfile；类型 **Web Service**
 2. 启动命令 `python3 server.py`（Dockerfile 源已经写在 CMD 里）
 3. Secrets（scope 选 Project）配 `INSTABOX_API_KEY`、`INSTABOX_MACHINE_ID`、
-   `INSTABOX_PUBLIC_URL`、`KEEPALIVE_TOKEN`
-4. Cron Jobs 新建：method `GET`，URL `https://<你的项目域名>/keepalive`，
-   header `X-Keepalive-Token: <KEEPALIVE_TOKEN 的值>`，cron `*/5 * * * *`
+   `INSTABOX_PUBLIC_URL`（`KEEPALIVE_TOKEN` 可选，见下）
+4. Cron Jobs 新建：method `GET`，URL `https://<你的项目域名>/keepalive`，cron `*/5 * * * *`
 5. 在 Cron 详情页看 next run，再手动 Trigger 一次，应返回 202、日志里出现 `OK: 服务可用。`
 
 注意：
 
-- `KEEPALIVE_TOKEN` 不配等于端点无鉴权，任何人在公网打它都会消耗你的 API 配额。
+- `KEEPALIVE_TOKEN` **不配就是不校验**（`server.py` 里 `if TOKEN and ...`），此时任何知道域名的人
+  打一下都会消耗你的 API 配额。不想多配一个口令就空着，域名本身算半个密码。
 - 单次最坏约 2~4 分钟（`wait_running` 90s + 重启 135s），所以 `/keepalive` 只投递、立刻
   回 202，不在请求里等——调用方的超时设多短都不会把一次真实的保活判成失败。
 - Pxxl 的 Cron Jobs 只在 Plus / Pro / Enterprise 档提供；免费档只能让容器自己循环。
@@ -134,7 +134,7 @@ cron-job.org 里这样填：
 | URL | `https://<你的 Pxxl 项目域名>/keepalive` |
 | 请求方法 | `GET` |
 | Schedule | Every 5 minutes（或 Every 1 minute） |
-| Headers | `X-Keepalive-Token: <KEEPALIVE_TOKEN 的值>` |
+| Headers | 留空（不配 `KEEPALIVE_TOKEN` 就不需要） |
 | Timeout | 默认 30 秒即可 |
 
 注意：
