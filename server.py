@@ -6,6 +6,8 @@
 """
 
 import os
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -13,6 +15,8 @@ import instabox_keepalive as k
 
 # 端点挂在公网上，不设口令等于谁都能替你消耗 API 配额；留空则不校验（仅本地用）
 TOKEN = os.environ.get("KEEPALIVE_TOKEN", "").strip()
+# >0 就自己按秒循环，用于没有 cron 的平台（Cloady 这类纯容器 PaaS）
+INTERVAL = int(os.environ.get("KEEPALIVE_INTERVAL", "0"))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -36,4 +40,11 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
     k.log(f"listening on 0.0.0.0:{port}, endpoint GET /keepalive")
+    if INTERVAL > 0:
+        def loop():
+            while True:
+                k.main()
+                time.sleep(INTERVAL)
+        threading.Thread(target=loop, daemon=True).start()
+        k.log(f"自循环已开启，每 {INTERVAL}s 一轮")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

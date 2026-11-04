@@ -92,6 +92,14 @@ Dockerfile   python:3.12-slim + CMD python3 server.py
 - 单次最坏约 2~4 分钟（`wait_running` 90s + 重启 135s），cron 的 timeout 要大于它。
 - Pxxl 的 Cron Jobs 只在 Plus / Pro / Enterprise 档提供；免费档只能让容器自己循环。
 
+### 没有 cron 的平台（Cloady 这类纯容器 PaaS）
+
+Cloady（NeptoLab）只有长驻容器，没有定时任务产品，但它不按需休眠，所以不需要 cron：
+把 `KEEPALIVE_INTERVAL` 设成 `300`，`server.py` 就自己每 5 分钟跑一轮，`$PORT` 照样监听
+（Cloady 用它做健康检查和地址）。免费额度：一个工作区 0.5 vCPU / 1 GB / 5 GB SSD /
+100 GB 流量，这个脚本几十 MB 内存，够用；但新加坡区当前售罄，其余区是"首月免费试用"，
+之后要绑卡。
+
 ## 免费的定时器：cron-job.org
 
 cron-job.org 完全免费、无限个任务、最小 1 分钟粒度、支持任意 method + 自定义 header + 请求体，
