@@ -205,6 +205,41 @@ if __name__ == "__main__":
         assert err_code({"code": "plain"}) == "plain"
         assert err_code({}) == ""
         assert retry_after({}) is None
+
+        # 错误码分流：桩掉网络层，不碰真实机器（真机 8 小时才走一次这条路径）
+        real = api, time.sleep, API_KEY, MACHINE_ID, PUBLIC_URL
+        API_KEY, MACHINE_ID, PUBLIC_URL = "ibk_stub", "m_stub", ""
+        time.sleep = lambda s: None
+
+        def branch(lease_seq, state):
+            global api
+            seq, seen = list(lease_seq), []
+
+            def fake(method, path, body=None, timeout=30):
+                seen.append(f"{method} {path}")
+                if "activity-leases" in path:
+                    return seq.pop(0) if seq else (200, {"expiresAt": "t"})
+                return (200, {"state": state}) if method == "GET" else (200, {})
+
+            api = fake
+            try:
+                return main(), seen
+            finally:
+                api = real[0]
+
+        def err(code, ra=None):
+            return 409, {"error": {"code": code, "retryAfterSeconds": ra}}
+
+        assert branch([err("machine_cooldown", 60)], "suspended")[0] == 0
+        assert branch([err("operation_conflict", 5)], "starting")[0] == 0
+        assert branch([err("host_unavailable")], "running")[0] == 0
+        assert branch([(401, {"error": {"code": "unauthorized"}})], "running")[0] == 2
+        rc, seen = branch([err("machine_not_running")], "stopped")
+        assert rc == 0 and any(p.endswith("/start") for p in seen), seen
+        rc, seen = branch([err("machine_not_running")], "suspended")
+        assert rc == 0 and any(p.endswith("/wake") for p in seen), seen
+
+        api, time.sleep, API_KEY, MACHINE_ID, PUBLIC_URL = real
         print("self-check ok")
         sys.exit(0)
     sys.exit(main())

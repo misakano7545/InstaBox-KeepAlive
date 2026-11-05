@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+      - name: self-check（错误码分流，桩掉网络，不碰真实机器）
+        run: python3 instabox_keepalive.py --self-check
       - name: renew lease / probe / recover
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
