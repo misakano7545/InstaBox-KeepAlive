@@ -59,7 +59,9 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 每轮做三件事：
 
 1. 查机器状态；
-2. 续 lease（TTL 3600s）；拿不到且报 `machine_not_running` 就先 `wake`，还不行就 `start`，然后重试续租；
+2. 续 lease（TTL 3600s）；拿不到时按错误码分流：`machine_cooldown` / `operation_conflict` /
+   `host_unavailable` 都是等下一轮（机器会自己回来，动手只会再撞一次），
+   `machine_not_running` 才看 state 决定 `start`（stopped）还是 `wake`，然后带 backoff 重试续租；
 3. 访问一次 `INSTABOX_PUBLIC_URL`，**2xx/3xx 才算服务可用**（404/502/超时都算挂了）。
    挂了就 exec 一次 `INSTABOX_RESTART_CMD`，5 秒后再访问一次确认。
 
@@ -89,7 +91,7 @@ Dockerfile   python:3.12-slim + CMD python3 server.py
 
 - `KEEPALIVE_TOKEN` **不配就是不校验**（`server.py` 里 `if TOKEN and ...`），此时任何知道域名的人
   打一下都会消耗你的 API 配额。不想多配一个口令就空着，域名本身算半个密码。
-- 单次最坏约 2~4 分钟（`wait_running` 90s + 重启 135s），所以 `/keepalive` 只投递、立刻
+- 单次最坏约 2~4 分钟（wake/start 45s + lease 重试 30s + 重启 135s），所以 `/keepalive` 只投递、立刻
   回 202，不在请求里等——调用方的超时设多短都不会把一次真实的保活判成失败。
 - Pxxl 的 Cron Jobs 只在 Plus / Pro / Enterprise 档提供；免费档只能让容器自己循环。
 
@@ -152,7 +154,7 @@ cron-job.org 里这样填：
   现在只能手动 Actions → Run workflow，或由外部每分钟/5 分钟 `gh workflow run` 敲门。
 - `INSTABOX_LEASE_TTL` 仍是 3600，配合 5 分钟粒度的外部敲门留足余量。
 - 实例连续运行 8 小时后会被平台停掉，届时由上面第 2 步的 `start` 分支拉起来，
-  单个 run 最长约 2 分钟（含 `wait_running` 轮询）。
+  单个 run 最长约 2 分钟（含 wake/start 的 45 秒等待）。
 - 存活判断只看 URL 根路径，如果服务的根路径本身就返回 4xx（只是 API，没有首页），
   这个检查会一直误报挂了——那就把 `public_url_status()` 里的 `PUBLIC_URL + "/"` 换成真实的健康检查路径。
 - 重启命令由 `INSTABOX_RESTART_CMD` 提供，脚本不假设任何服务名或端口；不配就只报警不恢复。

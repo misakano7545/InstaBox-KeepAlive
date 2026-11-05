@@ -76,17 +76,6 @@ def retry_after(payload):
     return None
 
 
-def wait_running(timeout=90):
-    waited = 0
-    while waited < timeout:
-        status, info = api("GET", f"/v1/machines/{MACHINE_ID}", timeout=30)
-        if status == 200 and info.get("state") == "running":
-            return True
-        time.sleep(5)
-        waited += 5
-    return False
-
-
 def renew_lease():
     return api("PUT", f"/v1/machines/{MACHINE_ID}/activity-leases/{LEASE_ID}",
                {"ttlSeconds": LEASE_TTL}, timeout=30)
@@ -147,37 +136,43 @@ def main():
 
     status, info = renew_lease()
     leased = status == 200
-    # max-run 暂停后平台强制冷却 5~135 分钟，这段时间 exec/wake/start/lease 全部 409。
-    # 这是免费机的固有代价，不是故障：记一行就退出，别每 5 分钟刷一次红。
-    if not leased and err_code(info) == "machine_cooldown":
-        log(f"冷却中，还需 {retry_after(info)}s；等下一轮。")
-        return 0
-    if not leased and status == 409 and err_code(info) == "machine_not_running":
-        log("machine not running; trying wake...")
-        status, info = api("POST", f"/v1/machines/{MACHINE_ID}/wake", {}, timeout=60)
-        log(f"wake -> HTTP {status}")
-        if wait_running():
-            log("machine running after wake.")
-        status, info = renew_lease()
-        leased = status == 200
-    if not leased and status == 409 and err_code(info) == "machine_not_running":
-        log("still not running (maybe stopped after 8h max runtime); trying start...")
-        status, info = api("POST", f"/v1/machines/{MACHINE_ID}/start", {}, timeout=60)
-        log(f"start -> HTTP {status}")
-        if wait_running():
-            log("machine running after start.")
-        status, info = renew_lease()
-        leased = status == 200
 
-    if not leased:
+    if not leased and status in (401, 403):
         if status == 401:
             log("ERROR: key 无效或已过期（401）。请检查 INSTABOX_API_KEY 是否填对、key 是否被删。")
-            return 2
-        if status == 403:
+        else:
             log("ERROR: key 权限不够（403）。建 key 时范围要勾 machines:read 和 machines:write。")
-            return 2
-        log(f"ERROR: lease failed, HTTP {status}, code={err_code(info)}, body={str(info)[:200]}")
         return 2
+
+    if not leased:
+        code = err_code(info)
+        # 这两类是"机器会自己回来"，wake/start 只会再吃一个 operation_conflict
+        if code == "machine_cooldown":
+            log(f"冷却中，还需 {retry_after(info)}s；等下一轮。")
+            return 0
+        if code in ("operation_conflict", "host_unavailable"):
+            log(f"机器正在切换状态（{code}），{retry_after(info) or '?'}s 后自己回来；等下一轮。")
+            return 0
+        if code != "machine_not_running":
+            log(f"ERROR: lease failed, HTTP {status}, code={code}, body={str(info)[:200]}")
+            return 2
+
+        state = api("GET", f"/v1/machines/{MACHINE_ID}", timeout=30)[1].get("state")
+        verb = "start" if state == "stopped" else "wake"
+        log(f"state={state}; {verb}...")
+        s2, i2 = api("POST", f"/v1/machines/{MACHINE_ID}/{verb}", {}, timeout=60)
+        log(f"{verb} -> HTTP {s2} {err_code(i2)}")
+        # 不轮询 state：API 的 state 有约 30s 延迟，机器已经起来时它还会显示 starting。
+        # lease 续上是唯一真相。
+        for delay in (5, 10, 15):
+            time.sleep(delay)
+            status, info = renew_lease()
+            if status == 200:
+                break
+        leased = status == 200
+        if not leased:
+            log(f"ERROR: {verb} 后仍无法续租，HTTP {status}, code={err_code(info)}")
+            return 2
     log(f"OK: lease active, expiresAt={info.get('expiresAt')}")
 
     probe = public_url_status()
@@ -201,4 +196,15 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-check"]:
+        # 真实错误体（2026-11-05 从 API 抓的），err_code 回归的守卫
+        cold = {"error": {"code": "machine_cooldown", "retryAfterSeconds": 5831}}
+        assert err_code(cold) == "machine_cooldown"
+        assert retry_after(cold) == 5831
+        assert err_code({"error": {"code": "machine_not_running"}}) == "machine_not_running"
+        assert err_code({"code": "plain"}) == "plain"
+        assert err_code({}) == ""
+        assert retry_after({}) is None
+        print("self-check ok")
+        sys.exit(0)
     sys.exit(main())
