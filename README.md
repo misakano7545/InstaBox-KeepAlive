@@ -12,7 +12,7 @@ Dockerfile                       PaaS 容器镜像
 
 ## 配置（一次性）
 
-仓库 → Settings → Secrets and variables → Actions，新建三个 **Repository secret**：
+仓库 → Settings → Secrets and variables → Actions，新建四个 **Repository secret**：
 
 | Secret | 说明 |
 | --- | --- |
@@ -22,6 +22,26 @@ Dockerfile                       PaaS 容器镜像
 | `INSTABOX_RESTART_CMD` | 可选。URL 挂了时在机器内执行的重启命令，如 `docker compose -f /root/app/docker-compose.yml up -d` |
 
 仓库是公开的，所以机器 ID 和地址也走 secret，不写进代码。
+
+`INSTABOX_PUBLIC_URL` 留空会让整条自愈链断开：脚本会直接 `public URL 未配置，跳过存活检查` 然后退出，
+后面的 `INSTABOX_RESTART_CMD` 永远执行不到。两个要么都配，要么都别指望它自愈。
+
+## 机器侧：让服务自己不依赖保活也能活
+
+保活脚本只能在你给定的命令里救一次；进程崩了要等下一轮。把服务交给 systemd 管，
+崩了 5 秒内自己回来，机器重启也自动起，保活那条命令就退化成兜底。
+
+```bash
+# 机器内执行（示例见 machine/astrbot.service，按自己的路径改）
+sudo cp machine/astrbot.service /etc/systemd/system/astrbot.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now astrbot
+```
+
+之后 `INSTABOX_RESTART_CMD` 填 `sudo systemctl restart astrbot && sleep 12`。
+末尾那个 `sleep` 是必需的：`systemctl restart` 是异步的，0.04 秒就返回，
+而脚本在命令返回后只等 5 秒就去探活，服务还没绑上端口就会被判成"重启后仍不可达"。
+
 
 ### 这几个值怎么拿
 
