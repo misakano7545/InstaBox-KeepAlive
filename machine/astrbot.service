@@ -10,10 +10,6 @@ Group=user
 WorkingDirectory=/data/home
 Environment=HOME=/data/home
 Environment=TMPDIR=/data/tmp
-# InstaBox 的出网走它自己的代理 CA，缺这几个变量模型/Telegram 的 TLS 会失败
-Environment=SSL_CERT_FILE=/run/instabox/secrets/ca-bundle.pem
-Environment=REQUESTS_CA_BUNDLE=/run/instabox/secrets/ca-bundle.pem
-Environment=CURL_CA_BUNDLE=/run/instabox/secrets/ca-bundle.pem
 ExecStart=/data/home/.local/share/uv/tools/astrbot/bin/python -m astrbot.cli.__main__ run
 StandardOutput=append:/data/home/data/logs/astrbot-stdout.log
 StandardError=inherit
