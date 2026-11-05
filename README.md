@@ -38,9 +38,22 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now astrbot
 ```
 
-之后 `INSTABOX_RESTART_CMD` 填 `sudo systemctl restart astrbot && sleep 12`。
+之后 `INSTABOX_RESTART_CMD` 填：
+
+```bash
+sudo cp -n /data/home/astrbot.service /etc/systemd/system/astrbot.service \
+  && sudo systemctl daemon-reload \
+  && sudo systemctl enable astrbot \
+  && sudo systemctl restart astrbot \
+  && sleep 12
+```
+
+四个点都是有原因的：`/etc` 在 root disk 上，机器重建后 unit 会没，所以先把
+`/data`（持久盘）那份 `cp -n` 装回去（`-n` 保证不覆盖手工改过的版本）；
+`daemon-reload` 让新 unit 生效；`enable` 补回开机自启的软链；`restart` 对已停和运行中都成立。
 末尾那个 `sleep` 是必需的：`systemctl restart` 是异步的，0.04 秒就返回，
 而脚本在命令返回后只等 5 秒就去探活，服务还没绑上端口就会被判成"重启后仍不可达"。
+
 
 
 ### 这几个值怎么拿
