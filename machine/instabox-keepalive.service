@@ -1,0 +1,10 @@
+[Unit]
+Description=InstaBox keepalive: renew lease, wake machine, restart AstrBot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/instabox/keepalive.env
+ExecStart=/usr/bin/python3 /root/dev/InstaBox-KeepAlive/instabox_keepalive.py
+# 计时器是 oneshot，失败也要让下一轮照跑
+SuccessExitStatus=0 1 2

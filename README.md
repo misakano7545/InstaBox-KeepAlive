@@ -101,7 +101,28 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 返回码：`0` 正常，`1` 服务不可达（重启后仍不可达，或没配重启命令），`2` 鉴权或 lease 失败。
 `1` / `2` 都会让运行变红，GitHub 会发失败邮件。
 
-## 部署到 PaaS（Pxxl / Railway / Render 等）
+## 本机 systemd timer（推荐，取代 Pxxl / cron-job.org）
+
+保活不需要 PaaS：任何一台 7×24 的机器 + 一个 timer 就够。
+
+```bash
+sudo install -d -m 700 /etc/instabox
+sudo install -m 600 /dev/stdin /etc/instabox/keepalive.env <<'EOF'
+INSTABOX_API_KEY=...
+INSTABOX_MACHINE_ID=m_...
+INSTABOX_PUBLIC_URL=https://...
+INSTABOX_LEASE_TTL=1800
+INSTABOX_RESTART_CMD=sudo cp -n /data/home/astrbot.service /etc/systemd/system/astrbot.service && sudo systemctl daemon-reload && sudo systemctl enable astrbot && sudo systemctl restart astrbot && sleep 12
+EOF
+sudo install -m 644 machine/instabox-keepalive.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now instabox-keepalive.timer
+```
+
+`LEASE_TTL` 要比触发间隔长（1800s > 10min），否则两轮之间 lease 先过期。
+成败看 `journalctl -u instabox-keepalive.service`，unit 本身不会因为 exit 1/2 变红。
+
+## 部署到 PaaS（Pxxl / Railway / Render 等）—— 备用方案
+
 
 一次性脚本不能直接上：PaaS 的 Web Service 要求监听 `$PORT`、绑 `0.0.0.0`、能过健康检查，
 跑完就退出的进程会被判定部署失败。所以仓库里另有：
