@@ -60,9 +60,20 @@ def api(method, path, body=None, timeout=30):
 
 
 def err_code(payload):
+    # 真实错误形如 {"error":{"code":"machine_cooldown",...}}，直接取 payload["error"] 会返回整个 dict，
+    # 下面的字符串比较永远为假，唤醒/启动分支就成了死代码。
     if isinstance(payload, dict):
-        return payload.get("code") or payload.get("error") or ""
+        e = payload.get("error")
+        if isinstance(e, dict):
+            return e.get("code") or ""
+        return e or payload.get("code") or ""
     return ""
+
+
+def retry_after(payload):
+    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+        return payload["error"].get("retryAfterSeconds")
+    return None
 
 
 def wait_running(timeout=90):
@@ -136,6 +147,11 @@ def main():
 
     status, info = renew_lease()
     leased = status == 200
+    # max-run 暂停后平台强制冷却 5~135 分钟，这段时间 exec/wake/start/lease 全部 409。
+    # 这是免费机的固有代价，不是故障：记一行就退出，别每 5 分钟刷一次红。
+    if not leased and err_code(info) == "machine_cooldown":
+        log(f"冷却中，还需 {retry_after(info)}s；等下一轮。")
+        return 0
     if not leased and status == 409 and err_code(info) == "machine_not_running":
         log("machine not running; trying wake...")
         status, info = api("POST", f"/v1/machines/{MACHINE_ID}/wake", {}, timeout=60)
