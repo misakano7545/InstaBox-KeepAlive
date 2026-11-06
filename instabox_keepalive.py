@@ -23,12 +23,9 @@ try:
     LEASE_TTL = int(os.environ.get("INSTABOX_LEASE_TTL", "900"))
 except ValueError:
     LEASE_TTL = 900
-try:
-    # 免费机单次运行上限 480 分钟，撞上就强制挂起并吃 120-135 分钟冷却（连撞越多次越久）。
-    # 提前自己 pause/resume 换一个新窗口，冷却就不欠了，连击计数也归零。
-    PAUSE_AFTER_MIN = int(os.environ.get("INSTABOX_PAUSE_AFTER_MIN", "420"))
-except ValueError:
-    PAUSE_AFTER_MIN = 420
+# 免费机的 maxRunMinutes 是滚动的（每轮 2 小时，够工作量才续 2 小时），撞上就强制挂起
+# 并吃冷却，连撞越久。提前这么多分钟自己换窗口，冷却就不欠了，连击计数也归零。
+HEADROOM_MIN = 30
 
 API_KEY = os.environ.get("INSTABOX_API_KEY", "").strip()
 # 机器内重启服务的命令，例如 "docker compose -f /root/app/docker-compose.yml up -d"
@@ -161,8 +158,10 @@ def main():
     if status == 200:
         log(f"state={info.get('state')} autoSuspendAfterSeconds={info.get('autoSuspendAfterSeconds')} "
             f"maxRunMinutes={info.get('maxRunMinutes')} runStartedAt={info.get('runStartedAt')}")
-        if info.get("state") == "running" and 0 < PAUSE_AFTER_MIN <= run_minutes(info):
-            log(f"这一轮已跑 {run_minutes(info):.0f} 分钟（阈值 {PAUSE_AFTER_MIN}），主动换窗口，免得撞 max-run……")
+        limit = info.get("maxRunMinutes")
+        if info.get("state") == "running" and isinstance(limit, int) and limit > 0 \
+                and run_minutes(info) >= limit - HEADROOM_MIN:
+            log(f"这一轮已跑 {run_minutes(info):.0f}/{limit} 分钟，主动换窗口，免得撞 max-run……")
             recycle_run()
     else:
         log(f"state check skipped (HTTP {status}, code={err_code(info)}); continuing to lease.")
@@ -252,7 +251,7 @@ if __name__ == "__main__":
         API_KEY, MACHINE_ID, PUBLIC_URL = "ibk_stub", "m_stub", ""
         time.sleep = lambda s: None
 
-        def branch(lease_seq, state, run_started=None, auto_sleep=True):
+        def branch(lease_seq, state, run_started=None, auto_sleep=True, max_run=480):
             global api
             seq, seen = list(lease_seq), []
 
@@ -261,7 +260,7 @@ if __name__ == "__main__":
                 if "activity-leases" in path:
                     return seq.pop(0) if seq else (200, {"expiresAt": "t"})
                 if method == "GET":
-                    return 200, {"state": state, "runStartedAt": run_started,
+                    return 200, {"state": state, "runStartedAt": run_started, "maxRunMinutes": max_run,
                                  "autoSuspendedAt": "2026-11-06T05:30:34Z" if auto_sleep else None}
                 return 200, {}
 
@@ -281,9 +280,14 @@ if __name__ == "__main__":
 
         # 换窗口：只有 running 且跑满阈值才 pause+resume，没到点一根手指都不碰
         now_iso = lambda m: (datetime.now(timezone.utc) - timedelta(minutes=m)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        rc, seen = branch([(200, {"expiresAt": "t"})], "running", now_iso(PAUSE_AFTER_MIN + 5))
+        rc, seen = branch([(200, {"expiresAt": "t"})], "running", now_iso(455), max_run=480)
         assert rc == 0 and any(p.endswith("/suspend") for p in seen) and any(p.endswith("/resume") for p in seen), seen
-        rc, seen = branch([(200, {"expiresAt": "t"})], "running", now_iso(5))
+        rc, seen = branch([(200, {"expiresAt": "t"})], "running", now_iso(5), max_run=480)
+        assert not any(p.endswith(("/suspend", "/resume")) for p in seen), seen
+        # 阈值跟着平台给的 maxRunMinutes 走：2 小时窗口不会等到 480 分钟才动手
+        rc, seen = branch([(200, {"expiresAt": "t"})], "running", now_iso(100), max_run=120)
+        assert any(p.endswith("/suspend") for p in seen), seen
+        rc, seen = branch([(200, {"expiresAt": "t"})], "running", now_iso(10), max_run=-1)
         assert not any(p.endswith(("/suspend", "/resume")) for p in seen), seen
         assert run_minutes({}) == 0.0
         rc, seen = branch([err("machine_not_running")], "stopped")
