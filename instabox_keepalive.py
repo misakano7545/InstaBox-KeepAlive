@@ -191,7 +191,9 @@ def main():
             return 2
 
         state = api("GET", f"/v1/machines/{MACHINE_ID}", timeout=30)[1].get("state")
-        verb = "start" if state == "stopped" else "wake"
+        # paused 机器 wake 不回来（只有自己 idle 睡的才会 on-use 唤醒），但 start 对
+        # stopped 和 paused 都成立，所以这两种都走 start。
+        verb = "start" if state in ("stopped", "paused") else "wake"
         log(f"state={state}; {verb}...")
         s2, i2 = api("POST", f"/v1/machines/{MACHINE_ID}/{verb}", {}, timeout=60)
         log(f"{verb} -> HTTP {s2} {err_code(i2)}")
@@ -279,6 +281,8 @@ if __name__ == "__main__":
         assert rc == 0 and any(p.endswith("/start") for p in seen), seen
         rc, seen = branch([err("machine_not_running")], "suspended")
         assert rc == 0 and any(p.endswith("/wake") for p in seen), seen
+        rc, seen = branch([err("machine_not_running")], "paused")
+        assert rc == 0 and any(p.endswith("/start") for p in seen), seen
 
         api, time.sleep, API_KEY, MACHINE_ID, PUBLIC_URL = real
         print("self-check ok")
