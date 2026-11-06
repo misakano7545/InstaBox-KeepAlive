@@ -190,10 +190,16 @@ def main():
             log(f"ERROR: lease failed, HTTP {status}, code={code}, body={str(info)[:200]}")
             return 2
 
-        state = api("GET", f"/v1/machines/{MACHINE_ID}", timeout=30)[1].get("state")
-        # paused 机器 wake 不回来（只有自己 idle 睡的才会 on-use 唤醒），但 start 对
-        # stopped 和 paused 都成立，所以这两种都走 start。
-        verb = "start" if state in ("stopped", "paused") else "wake"
+        info2 = api("GET", f"/v1/machines/{MACHINE_ID}", timeout=30)[1]
+        state = info2.get("state")
+        # suspended 有两种：自己睡的（autoSuspendedAt 有值，访问即醒）和被手动暂停的
+        # （autoSuspendedAt 为空，wake 永远拉不起来，只有 resume/start 管用）。
+        if state == "stopped":
+            verb = "start"
+        elif state == "suspended" and not info2.get("autoSuspendedAt"):
+            verb = "resume"
+        else:
+            verb = "wake"
         log(f"state={state}; {verb}...")
         s2, i2 = api("POST", f"/v1/machines/{MACHINE_ID}/{verb}", {}, timeout=60)
         log(f"{verb} -> HTTP {s2} {err_code(i2)}")
@@ -246,7 +252,7 @@ if __name__ == "__main__":
         API_KEY, MACHINE_ID, PUBLIC_URL = "ibk_stub", "m_stub", ""
         time.sleep = lambda s: None
 
-        def branch(lease_seq, state, run_started=None):
+        def branch(lease_seq, state, run_started=None, auto_sleep=True):
             global api
             seq, seen = list(lease_seq), []
 
@@ -254,7 +260,10 @@ if __name__ == "__main__":
                 seen.append(f"{method} {path}")
                 if "activity-leases" in path:
                     return seq.pop(0) if seq else (200, {"expiresAt": "t"})
-                return (200, {"state": state, "runStartedAt": run_started}) if method == "GET" else (200, {})
+                if method == "GET":
+                    return 200, {"state": state, "runStartedAt": run_started,
+                                 "autoSuspendedAt": "2026-11-06T05:30:34Z" if auto_sleep else None}
+                return 200, {}
 
             api = fake
             try:
@@ -281,8 +290,9 @@ if __name__ == "__main__":
         assert rc == 0 and any(p.endswith("/start") for p in seen), seen
         rc, seen = branch([err("machine_not_running")], "suspended")
         assert rc == 0 and any(p.endswith("/wake") for p in seen), seen
-        rc, seen = branch([err("machine_not_running")], "paused")
-        assert rc == 0 and any(p.endswith("/start") for p in seen), seen
+        # 手动暂停（autoSuspendedAt 为空）wake 救不回，必须 resume
+        rc, seen = branch([err("machine_not_running")], "suspended", auto_sleep=False)
+        assert rc == 0 and any(p.endswith("/resume") for p in seen), seen
 
         api, time.sleep, API_KEY, MACHINE_ID, PUBLIC_URL = real
         print("self-check ok")
