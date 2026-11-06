@@ -101,6 +101,15 @@ curl -s -H "Authorization: Bearer $INSTABOX_API_KEY" \
 返回码：`0` 正常，`1` 服务不可达（重启后仍不可达，或没配重启命令），`2` 鉴权或 lease 失败。
 `1` / `2` 都会让运行变红，GitHub 会发失败邮件。
 
+## 免费机的 8 小时墙：到点自己换窗口
+
+免费机 `maxRunMinutes=480`，跑满就被强制挂起，还要吃冷却（连撞越多越久：5-20 → 60-75 →
+120-135 分钟），冷却期间连 `wake` 都是 `409 machine_cooldown`。续租 lease 不延长这个上限。
+
+所以脚本在 `runStartedAt` 满 `INSTABOX_PAUSE_AFTER_MIN`（默认 420 分钟）时自己
+`POST /suspend` 再 `POST /resume`：主动结束的这一轮不欠冷却，max-run 连击计数也归零。
+代价是一次十几秒的停机，换掉本来每 8 小时丢掉的 2 小时。
+
 ## 本机 systemd timer（推荐，取代 Pxxl / cron-job.org）
 
 保活不需要 PaaS：任何一台 7×24 的机器 + 一个 timer 就够。
